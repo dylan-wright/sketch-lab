@@ -1,39 +1,53 @@
-package main
+package countmin
 
 import (
-	"errors"
-	"../badhash"
-	"fmt"
-	"os"
-	"io/ioutil"
-	"log"
+	"../badhashes"
 	"strings"
-	"strconv"
+	"unsafe"
 )
 
+/**
+ * The count-min sketch can be used to estimate the frequency of an element
+ * in a multiset. For sets with a high range of possible values, such
+ * as the set of valid internet domain names it would require a large amount
+ * of space to store an individual counter for each element. This sketch
+ * allows us to get a pretty good estimate of the frequency of elements in
+ * such a set in a datastructure that can be easily stored in a database
+ *
+ * this datastructure uses space O(nh) where n is the number of hashing
+ * algorithms and h is the range of those algorithms' output
+ */
 type CountMin struct {
 	matrix [][]int
-	hashes []badhash.Badhash
+	hashes []badhashes.Badhash
 }
 
-func (cm *CountMin) initialize(hashCount int) {
+func (cm *CountMin) Size() int {
+	size := int(unsafe.Sizeof(*cm))
+	for i := 0; i < len(cm.matrix); i++ {
+		size += 4 * len(cm.matrix[i])
+	}
+	return size
+}
+
+func (cm *CountMin) Initialize(hashCount int, hashWidth int) {
 	cm.matrix = make([][]int, 0)
 
-	cm.hashes = make([]badhash.Badhash, hashCount)
+	cm.hashes = make([]badhashes.Badhash, hashCount)
 
 	for i := 0; i < hashCount; i++ {
-		cm.matrix = append(cm.matrix, make([]int, 256))
-		cm.hashes[i].Seed(i)
+		cm.matrix = append(cm.matrix, make([]int, 2 << uint(8 * hashWidth)))
+		cm.hashes[i].Seed(i, hashWidth)
 	}
 }
 
-func (cm *CountMin) insert(input string) {
+func (cm *CountMin) Insert(input string) {
 	for i := 0; i < len(cm.hashes); i++ {
 		cm.matrix[i][cm.hashes[i].Sum([]byte(input))] += 1
 	}
 }
 
-func (cm *CountMin) count(query string) int {
+func (cm *CountMin) Count(query string) int {
 	min := cm.matrix[0][cm.hashes[0].Sum([]byte(query))]
 
 	for i := 1; i < len(cm.hashes); i++ {
@@ -47,7 +61,12 @@ func (cm *CountMin) count(query string) int {
 	return min
 }
 
-func count(query string, words []string) int {
+/**
+ * helper function for determining the exact frequency of a string in the
+ * input multiset. This can be used to determine error in the count min
+ * datastructure
+ */
+func Count(query string, words []string) int {
 	count := 0
 	for i := 0; i < len(words); i++ {
 		if strings.Compare(words[i], query) == 0 {
@@ -56,61 +75,3 @@ func count(query string, words []string) int {
 	}
 	return count
 }
-
-
-func readFileToList(filename string) []string {
-	content, err := ioutil.ReadFile(filename)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-
-	var allWords []string
-
-	for i := 0; i < len(lines); i++ {
-		words := strings.Split(lines[i], " ")
-		allWords = append(allWords, words...)
-	}
-
-	for i := 0; i < len(allWords); i++ {
-		allWords[i] = strings.Trim(allWords[i], "\t.:'[]{}!@#$%^&*()_=+~`<>/?|,\";/\\-")
-	}
-
-	return allWords
-}
-
-func main() {
-	var countMin CountMin
-
-	hashCount, err := strconv.Atoi(os.Args[1])
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if hashCount < 1 || hashCount > 32 {
-		log.Fatal(errors.New("Invalid hashCount"))
-	}
-
-	inputFilename := os.Args[2]
-	queryFilename := os.Args[3]
-
-	inputs := readFileToList(inputFilename)
-	queries := readFileToList(queryFilename)
-
-	countMin.initialize(hashCount)
-
-	for i := 0; i < len(inputs); i++ {
-		countMin.insert(inputs[i])
-	}
-
-	for i := 0; i < len(queries); i++ {
-		countMinCount := countMin.count(queries[i])
-		trueCount := count(queries[i], inputs)
-
-		fmt.Printf("%s: %d true: %d\n", queries[i], countMinCount, trueCount)
-	}
-}
-
